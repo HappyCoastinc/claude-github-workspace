@@ -1,0 +1,57 @@
+name: Claude + n8n Integration Workflow
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  issues:
+    types: [opened, edited, labeled]
+
+jobs:
+  trigger-n8n-workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Trigger n8n Code Analysis Workflow
+        if: github.event_name == 'pull_request'
+        run: |
+          curl -X POST "${{ secrets.N8N_WEBHOOK_URL }}/code-analysis" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "event": "pull_request",
+              "repository": "${{ github.repository }}",
+              "pr_number": "${{ github.event.number }}",
+              "pr_url": "${{ github.event.pull_request.html_url }}",
+              "diff_url": "${{ github.event.pull_request.diff_url }}",
+              "author": "${{ github.event.pull_request.user.login }}"
+            }'
+            
+      - name: Trigger n8n Documentation Update
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          curl -X POST "${{ secrets.N8N_WEBHOOK_URL }}/docs-update" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "event": "push",
+              "repository": "${{ github.repository }}",
+              "commit_sha": "${{ github.sha }}",
+              "commit_message": "${{ github.event.head_commit.message }}",
+              "modified_files": ${{ toJson(github.event.head_commit.modified) }}
+            }'
+            
+      - name: Trigger n8n Issue Triage
+        if: github.event_name == 'issues' && github.event.action == 'opened'
+        run: |
+          curl -X POST "${{ secrets.N8N_WEBHOOK_URL }}/issue-triage" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "event": "issue_opened",
+              "repository": "${{ github.repository }}",
+              "issue_number": "${{ github.event.issue.number }}",
+              "issue_title": "${{ github.event.issue.title }}",
+              "issue_body": "${{ github.event.issue.body }}",
+              "author": "${{ github.event.issue.user.login }}"
+            }'

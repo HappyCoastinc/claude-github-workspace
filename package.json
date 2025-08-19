@@ -1,0 +1,32 @@
+{
+  "name": "claude-github-workspace",
+  "version": "1.0.0",
+  "description": "Integration workspace for Claude Code, GitHub, and n8n automation",
+  "main": "index.js",
+  "scripts": {
+    "n8n:start": "n8n start",
+    "n8n:import": "n8n import:workflow --input=./n8n-workflows/",
+    "github:setup": "gh repo create claude-github-workspace --public --source=. --push",
+    "setup:all": "npm run github:setup && npm run n8n:import && npm run n8n:start"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HappyCoastinc/claude-github-workspace.git"
+  },
+  "keywords": [
+    "claude",
+    "github",
+    "n8n",
+    "automation",
+    "ai",
+    "workflow"
+  ],
+  "author": "HappyCoastinc",
+  "license": "MIT",
+  "devDependencies": {
+    "n8n": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

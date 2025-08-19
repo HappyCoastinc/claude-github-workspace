@@ -1,0 +1,180 @@
+{
+  "name": "Claude Code Assistant Integration",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "/code-analysis",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "f1d2e3c4-5b6a-7c8d-9e0f-1a2b3c4d5e6f",
+      "name": "GitHub Webhook - Code Analysis",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract PR information from GitHub webhook\nconst prData = items[0].json;\n\nreturn [{\n  json: {\n    repository: prData.repository,\n    pr_number: prData.pr_number,\n    pr_url: prData.pr_url,\n    diff_url: prData.diff_url,\n    author: prData.author,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "a2b3c4d5-6e7f-8g9h-0i1j-2k3l4m5n6o7p",
+      "name": "Process PR Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.diff_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "token {{ $credentials.githubApi.accessToken }}"
+        },
+        "options": {
+          "headers": {
+            "Accept": "application/vnd.github.v3.diff"
+          }
+        }
+      },
+      "id": "b3c4d5e6-7f8g-9h0i-1j2k-3l4m5n6o7p8q",
+      "name": "Fetch PR Diff",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Prepare prompt for Claude analysis\nconst prData = items[0].json;\nconst diffContent = items[0].binary?.data?.toString() || 'No diff available';\n\nconst prompt = `Analyze this pull request for code quality, potential issues, and improvement suggestions:\n\nRepository: ${prData.repository}\nPR #${prData.pr_number}\nAuthor: ${prData.author}\n\nCode changes:\n${diffContent}\n\nPlease provide:\n1. Code quality assessment\n2. Potential bugs or issues\n3. Performance considerations\n4. Security concerns\n5. Improvement suggestions\n\nKeep the review constructive and helpful.`;\n\nreturn [{\n  json: {\n    ...prData,\n    claude_prompt: prompt,\n    diff_content: diffContent.substring(0, 10000) // Limit for API\n  }\n}];"
+      },
+      "id": "c4d5e6f7-8g9h-0i1j-2k3l-4m5n6o7p8q9r",
+      "name": "Prepare Claude Prompt",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "resource": "text",
+        "operation": "message",
+        "model": "claude-3-5-sonnet-20241022",
+        "prompt": "={{ $json.claude_prompt }}",
+        "options": {
+          "maxTokens": 1000,
+          "temperature": 0.1
+        }
+      },
+      "id": "d5e6f7g8-9h0i-1j2k-3l4m-5n6o7p8q9r0s",
+      "name": "Claude Analysis",
+      "type": "n8n-nodes-base.anthropic",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "issue",
+        "operation": "createComment",
+        "owner": "={{ $json.repository.split('/')[0] }}",
+        "repository": "={{ $json.repository.split('/')[1] }}",
+        "issueNumber": "={{ $json.pr_number }}",
+        "body": "🤖 **Claude Code Assistant Review**\\n\\n{{ $node['Claude Analysis'].json.content }}"
+      },
+      "id": "e6f7g8h9-0i1j-2k3l-4m5n-6o7p8q9r0s1t",
+      "name": "Post Review Comment",
+      "type": "n8n-nodes-base.github",
+      "typeVersion": 1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\\\"status\\\": \\\"success\\\", \\\"message\\\": \\\"Code analysis completed\\\", \\\"pr_number\\\": \\\"{{ $json.pr_number }}\\\"}"
+      },
+      "id": "f7g8h9i0-1j2k-3l4m-5n6o-7p8q9r0s1t2u",
+      "name": "Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1560, 300]
+    }
+  ],
+  "connections": {
+    "GitHub Webhook - Code Analysis": {
+      "main": [
+        [
+          {
+            "node": "Process PR Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process PR Data": {
+      "main": [
+        [
+          {
+            "node": "Fetch PR Diff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch PR Diff": {
+      "main": [
+        [
+          {
+            "node": "Prepare Claude Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Claude Prompt": {
+      "main": [
+        [
+          {
+            "node": "Claude Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Analysis": {
+      "main": [
+        [
+          {
+            "node": "Post Review Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Review Comment": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}
