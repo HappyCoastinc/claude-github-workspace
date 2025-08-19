@@ -1,0 +1,16 @@
+{
+  "timestamp": "2025-08-19T06:41:37.040Z",
+  "activeAlerts": 1,
+  "recentAlerts": 1,
+  "totalAlerts": 1,
+  "alerts": [
+    {
+      "id": "e8fe1d02-c8ca-4e61-a702-e7e914f94f53",
+      "timestamp": "2025-08-19T06:33:07.887Z",
+      "category": "resources",
+      "message": "High CPU usage for n8n: 85.5%",
+      "severity": "medium",
+      "resolved": false
+    }
+  ]
+}
