@@ -1,0 +1,351 @@
+{
+  "name": "Instagram Content Creator Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "id": "schedule-trigger-001",
+      "name": "Content Schedule",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "hour": 9,
+              "minute": 0
+            },
+            {
+              "hour": 15,
+              "minute": 0
+            },
+            {
+              "hour": 18,
+              "minute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Content Idea Generator using Claude\nconst contentTopics = [\n  'productivity tips',\n  'tech innovations',\n  'startup insights',\n  'AI developments',\n  'coding best practices',\n  'entrepreneurship',\n  'remote work',\n  'digital marketing',\n  'social media trends',\n  'business automation'\n];\n\nconst contentFormats = [\n  'carousel post',\n  'single image post',\n  'quote post',\n  'behind-the-scenes',\n  'tutorial post',\n  'infographic',\n  'story series',\n  'user-generated content',\n  'poll post',\n  'video post'\n];\n\nconst randomTopic = contentTopics[Math.floor(Math.random() * contentTopics.length)];\nconst randomFormat = contentFormats[Math.floor(Math.random() * contentFormats.length)];\n\nconst prompt = `Create an engaging Instagram ${randomFormat} about ${randomTopic}. \n\nPlease provide:\n1. Main caption (engaging, with emojis, under 2200 characters)\n2. Hashtags (mix of popular and niche, 20-25 hashtags)\n3. Content description for visuals\n4. Best posting time suggestion\n5. Engagement strategy\n\nMake it authentic, valuable, and aligned with a tech/business audience.`;\n\nreturn [{\n  json: {\n    topic: randomTopic,\n    format: randomFormat,\n    claude_prompt: prompt,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "content-generator-001",
+      "name": "Content Idea Generator",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "resource": "text",
+        "operation": "message",
+        "model": "claude-3-5-sonnet-20241022",
+        "prompt": "={{ $json.claude_prompt }}",
+        "options": {
+          "maxTokens": 1500,
+          "temperature": 0.7
+        }
+      },
+      "id": "claude-content-creator-001",
+      "name": "Claude Content Creator",
+      "type": "n8n-nodes-base.anthropic",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse Claude's response and structure for Instagram\nconst response = $input.first().json.content;\nconst originalData = $('Content Idea Generator').first().json;\n\n// Extract sections from Claude's response\nconst sections = response.split('\\n\\n');\n\nlet caption = '';\nlet hashtags = '';\nlet visualDescription = '';\nlet postingTime = '';\nlet engagementStrategy = '';\n\n// Parse each section\nsections.forEach(section => {\n  if (section.includes('caption') || section.includes('Caption')) {\n    caption = section.replace(/.*caption:?/i, '').trim();\n  } else if (section.includes('hashtag') || section.includes('Hashtag')) {\n    hashtags = section.replace(/.*hashtag:?/i, '').trim();\n  } else if (section.includes('visual') || section.includes('Visual')) {\n    visualDescription = section.replace(/.*visual:?/i, '').trim();\n  } else if (section.includes('time') || section.includes('Time')) {\n    postingTime = section.replace(/.*time:?/i, '').trim();\n  } else if (section.includes('engagement') || section.includes('Engagement')) {\n    engagementStrategy = section.replace(/.*engagement:?/i, '').trim();\n  }\n});\n\n// Clean up hashtags\nif (hashtags && !hashtags.startsWith('#')) {\n  hashtags = hashtags.split(' ').map(tag => \n    tag.startsWith('#') ? tag : `#${tag}`\n  ).join(' ');\n}\n\n// Create structured content\nconst instagramPost = {\n  id: `post_${Date.now()}`,\n  topic: originalData.topic,\n  format: originalData.format,\n  caption: caption,\n  hashtags: hashtags,\n  visualDescription: visualDescription,\n  suggestedPostingTime: postingTime,\n  engagementStrategy: engagementStrategy,\n  createdAt: new Date().toISOString(),\n  status: 'draft',\n  platform: 'instagram'\n};\n\nreturn [{\n  json: instagramPost\n}];"
+      },
+      "id": "content-parser-001",
+      "name": "Content Parser",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.unsplash.com/search/photos",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Client-ID {{ $credentials.unsplashApi.accessKey }}"
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.topic.replace(' ', '+') }}"
+            },
+            {
+              "name": "per_page",
+              "value": "10"
+            },
+            {
+              "name": "orientation",
+              "value": "squarish"
+            }
+          ]
+        }
+      },
+      "id": "image-search-001",
+      "name": "Find Stock Images",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Select best image and enhance content\nconst postData = $('Content Parser').first().json;\nconst imageResults = $input.first().json.results;\n\nlet selectedImage = null;\nif (imageResults && imageResults.length > 0) {\n  // Select highest quality image\n  selectedImage = imageResults.reduce((best, current) => \n    (current.likes > best.likes) ? current : best\n  );\n}\n\n// Enhanced post data with image\nconst enhancedPost = {\n  ...postData,\n  image: selectedImage ? {\n    url: selectedImage.urls.regular,\n    downloadUrl: selectedImage.urls.full,\n    altText: selectedImage.alt_description || postData.visualDescription,\n    photographer: selectedImage.user.name,\n    photographerUrl: selectedImage.user.links.html,\n    unsplashUrl: selectedImage.links.html\n  } : null,\n  readyToPost: true\n};\n\n// Add attribution if using Unsplash image\nif (selectedImage) {\n  enhancedPost.caption += `\\n\\n📸 Photo by ${selectedImage.user.name} on Unsplash`;\n}\n\nreturn [{\n  json: enhancedPost\n}];"
+      },
+      "id": "content-enhancer-001",
+      "name": "Content Enhancer",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "{{ $credentials.googleSheets.spreadsheetId }}",
+        "sheetName": "Instagram Content Queue",
+        "columnNamesFirstRow": true,
+        "valueInputMode": "raw",
+        "columns": [
+          {
+            "column": "ID",
+            "value": "={{ $json.id }}"
+          },
+          {
+            "column": "Topic",
+            "value": "={{ $json.topic }}"
+          },
+          {
+            "column": "Format",
+            "value": "={{ $json.format }}"
+          },
+          {
+            "column": "Caption",
+            "value": "={{ $json.caption }}"
+          },
+          {
+            "column": "Hashtags",
+            "value": "={{ $json.hashtags }}"
+          },
+          {
+            "column": "Image URL",
+            "value": "={{ $json.image ? $json.image.url : 'No image' }}"
+          },
+          {
+            "column": "Suggested Time",
+            "value": "={{ $json.suggestedPostingTime }}"
+          },
+          {
+            "column": "Status",
+            "value": "={{ $json.status }}"
+          },
+          {
+            "column": "Created",
+            "value": "={{ $json.createdAt }}"
+          }
+        ]
+      },
+      "id": "save-to-queue-001",
+      "name": "Save to Content Queue",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 1,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.status }}",
+              "operation": "equal",
+              "value2": "draft"
+            }
+          ]
+        }
+      },
+      "id": "check-approval-001",
+      "name": "Check if Auto-Approve",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "channel": "#content-review",
+        "text": "🎨 **New Instagram Content Ready for Review**\\n\\n**Topic:** {{ $json.topic }}\\n**Format:** {{ $json.format }}\\n\\n**Caption Preview:**\\n{{ $json.caption.substring(0, 200) }}...\\n\\n**Hashtags:** {{ $json.hashtags.substring(0, 100) }}\\n\\n**Image:** {{ $json.image ? $json.image.url : 'No image selected' }}\\n\\n**Suggested Time:** {{ $json.suggestedPostingTime }}\\n\\n✅ Approve or ❌ Reject in the content queue spreadsheet",
+        "otherOptions": {
+          "includeLinkToWorkflow": true
+        }
+      },
+      "id": "slack-notification-001",
+      "name": "Notify Team for Review",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 1,
+      "position": [2000, 200]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Auto-posting logic (for approved content)\nconst content = $input.first().json;\n\n// This would integrate with Instagram's API or a service like Buffer/Hootsuite\n// For now, we'll create a structured object for manual posting\n\nconst postingInstructions = {\n  platform: 'instagram',\n  action: 'ready_to_post',\n  content: {\n    caption: content.caption,\n    hashtags: content.hashtags,\n    imageUrl: content.image?.url,\n    scheduledTime: content.suggestedPostingTime\n  },\n  instructions: [\n    '1. Download image from provided URL',\n    '2. Upload to Instagram',\n    '3. Copy caption and hashtags',\n    '4. Post at suggested time',\n    '5. Monitor engagement'\n  ],\n  engagementStrategy: content.engagementStrategy\n};\n\nreturn [{\n  json: postingInstructions\n}];"
+      },
+      "id": "auto-post-prep-001",
+      "name": "Prepare for Posting",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2000, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{{ $json }}"
+      },
+      "id": "workflow-response-001",
+      "name": "Workflow Complete",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2220, 300]
+    }
+  ],
+  "connections": {
+    "Content Schedule": {
+      "main": [
+        [
+          {
+            "node": "Content Idea Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Content Idea Generator": {
+      "main": [
+        [
+          {
+            "node": "Claude Content Creator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Content Creator": {
+      "main": [
+        [
+          {
+            "node": "Content Parser",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Content Parser": {
+      "main": [
+        [
+          {
+            "node": "Find Stock Images",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Stock Images": {
+      "main": [
+        [
+          {
+            "node": "Content Enhancer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Content Enhancer": {
+      "main": [
+        [
+          {
+            "node": "Save to Content Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Content Queue": {
+      "main": [
+        [
+          {
+            "node": "Check if Auto-Approve",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if Auto-Approve": {
+      "main": [
+        [
+          {
+            "node": "Notify Team for Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare for Posting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Team for Review": {
+      "main": [
+        [
+          {
+            "node": "Workflow Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare for Posting": {
+      "main": [
+        [
+          {
+            "node": "Workflow Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "staticData": null,
+  "tags": ["content", "instagram", "social-media", "automation"],
+  "triggerCount": 1,
+  "updatedAt": "2024-08-19T00:00:00.000Z",
+  "versionId": "1"
+}

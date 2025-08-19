@@ -1,0 +1,362 @@
+{
+  "name": "Twitter Content Creator & Thread Builder",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "id": "twitter-schedule-001",
+      "name": "Twitter Schedule",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "hour": 8,
+              "minute": 30
+            },
+            {
+              "hour": 12,
+              "minute": 0
+            },
+            {
+              "hour": 17,
+              "minute": 30
+            },
+            {
+              "hour": 20,
+              "minute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Twitter Content Strategy Generator\nconst tweetTypes = [\n  'industry insight thread',\n  'quick tip tweet',\n  'trending topic commentary',\n  'educational thread',\n  'behind-the-scenes',\n  'question to community',\n  'resource sharing',\n  'personal story',\n  'company update',\n  'tech news reaction'\n];\n\nconst industries = [\n  'artificial intelligence',\n  'software development',\n  'startup ecosystem',\n  'remote work culture',\n  'digital marketing',\n  'productivity tools',\n  'tech entrepreneurship',\n  'automation trends',\n  'business strategy',\n  'innovation insights'\n];\n\nconst threadStructures = [\n  'problem-solution-results',\n  'listicle with explanations',\n  'story with lessons learned',\n  'comparison and analysis',\n  'step-by-step tutorial',\n  'myth-busting facts',\n  'prediction and reasoning',\n  'personal experience sharing'\n];\n\nconst currentHour = new Date().getHours();\nlet contentType;\n\n// Time-based content strategy\nif (currentHour < 10) {\n  contentType = 'motivational insight';\n} else if (currentHour < 14) {\n  contentType = 'educational content';\n} else if (currentHour < 18) {\n  contentType = 'industry news reaction';\n} else {\n  contentType = 'community engagement';\n}\n\nconst selectedType = tweetTypes[Math.floor(Math.random() * tweetTypes.length)];\nconst selectedIndustry = industries[Math.floor(Math.random() * industries.length)];\nconst selectedStructure = threadStructures[Math.floor(Math.random() * threadStructures.length)];\n\nconst prompt = `Create engaging Twitter content about ${selectedIndustry}.\n\nContent Type: ${selectedType}\nContent Focus: ${contentType}\nThread Structure: ${selectedStructure}\n\nRequirements:\n1. If single tweet: max 280 characters, punchy and engaging\n2. If thread: 3-7 tweets, numbered, each under 280 characters\n3. Include relevant emojis and hashtags\n4. Add a compelling hook in the first tweet\n5. End with a call-to-action or question\n6. Make it valuable and shareable\n7. Use conversational tone\n\nTarget audience: Tech entrepreneurs, developers, and business professionals.\n\nFormat your response as:\n[THREAD] or [SINGLE TWEET]\nTweet 1: [content]\nTweet 2: [content] (if thread)\n...\nHashtags: [relevant hashtags]\nBest posting time: [suggestion]`;\n\nreturn [{\n  json: {\n    selectedType,\n    selectedIndustry,\n    selectedStructure,\n    contentType,\n    claude_prompt: prompt,\n    timestamp: new Date().toISOString(),\n    currentHour\n  }\n}];"
+      },
+      "id": "twitter-strategy-001",
+      "name": "Twitter Strategy Generator",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "resource": "text",
+        "operation": "message",
+        "model": "claude-3-5-sonnet-20241022",
+        "prompt": "={{ $json.claude_prompt }}",
+        "options": {
+          "maxTokens": 1000,
+          "temperature": 0.8
+        }
+      },
+      "id": "claude-twitter-creator-001",
+      "name": "Claude Twitter Creator",
+      "type": "n8n-nodes-base.anthropic",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse Claude's Twitter response\nconst response = $input.first().json.content;\nconst strategyData = $('Twitter Strategy Generator').first().json;\n\n// Determine if it's a thread or single tweet\nconst isThread = response.includes('[THREAD]');\nconst isSingleTweet = response.includes('[SINGLE TWEET]');\n\n// Split response into sections\nconst lines = response.split('\\n').filter(line => line.trim());\n\nlet tweets = [];\nlet hashtags = '';\nlet bestTime = '';\n\n// Parse tweets\nlines.forEach(line => {\n  if (line.match(/^Tweet \\d+:/)) {\n    const tweetContent = line.replace(/^Tweet \\d+:\\s*/, '').trim();\n    tweets.push({\n      content: tweetContent,\n      length: tweetContent.length,\n      valid: tweetContent.length <= 280\n    });\n  } else if (line.toLowerCase().includes('hashtags:')) {\n    hashtags = line.replace(/.*hashtags:\\s*/i, '').trim();\n  } else if (line.toLowerCase().includes('best posting time:')) {\n    bestTime = line.replace(/.*best posting time:\\s*/i, '').trim();\n  }\n});\n\n// If no structured tweets found, try to extract from response\nif (tweets.length === 0) {\n  const tweetMatches = response.match(/\\d+\\/?\\d*[.)]\\s*([^\\n]+)/g);\n  if (tweetMatches) {\n    tweets = tweetMatches.map((match, index) => {\n      const content = match.replace(/^\\d+\\/?\\d*[.)]\\s*/, '').trim();\n      return {\n        content,\n        length: content.length,\n        valid: content.length <= 280\n      };\n    });\n  }\n}\n\n// Extract hashtags if not found\nif (!hashtags) {\n  const hashtagMatch = response.match(/#[\\w]+/g);\n  if (hashtagMatch) {\n    hashtags = hashtagMatch.join(' ');\n  }\n}\n\nconst twitterContent = {\n  id: `twitter_${Date.now()}`,\n  type: isThread ? 'thread' : 'single',\n  industry: strategyData.selectedIndustry,\n  contentType: strategyData.contentType,\n  structure: strategyData.selectedStructure,\n  tweets: tweets,\n  hashtags: hashtags,\n  suggestedTime: bestTime || `${strategyData.currentHour + 1}:00`,\n  totalCharacters: tweets.reduce((sum, tweet) => sum + tweet.length, 0),\n  validTweets: tweets.filter(tweet => tweet.valid).length,\n  invalidTweets: tweets.filter(tweet => !tweet.valid).length,\n  createdAt: new Date().toISOString(),\n  status: 'draft',\n  platform: 'twitter',\n  readyToPost: tweets.length > 0 && tweets.every(tweet => tweet.valid)\n};\n\nreturn [{\n  json: twitterContent\n}];"
+      },
+      "id": "twitter-parser-001",
+      "name": "Twitter Content Parser",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.twitter.com/2/tweets/search/recent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "Bearer {{ $credentials.twitterApi.bearerToken }}"
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.industry.replace(' ', ' OR ') }} -is:retweet lang:en"
+            },
+            {
+              "name": "max_results",
+              "value": "10"
+            },
+            {
+              "name": "tweet.fields",
+              "value": "public_metrics,created_at,author_id"
+            }
+          ]
+        }
+      },
+      "id": "trend-analysis-001",
+      "name": "Analyze Current Trends",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Enhance content with trend analysis\nconst twitterContent = $('Twitter Content Parser').first().json;\nconst trendData = $input.first().json;\n\n// Analyze trending topics and engagement\nlet trendingHashtags = [];\nlet avgEngagement = 0;\nlet trendInsights = 'No trend data available';\n\nif (trendData.data && trendData.data.length > 0) {\n  // Extract popular hashtags from trending tweets\n  const allHashtags = [];\n  let totalLikes = 0;\n  let totalRetweets = 0;\n  \n  trendData.data.forEach(tweet => {\n    if (tweet.public_metrics) {\n      totalLikes += tweet.public_metrics.like_count;\n      totalRetweets += tweet.public_metrics.retweet_count;\n    }\n    \n    // Extract hashtags\n    const hashtags = tweet.text.match(/#[\\w]+/g) || [];\n    allHashtags.push(...hashtags);\n  });\n  \n  // Count hashtag frequency\n  const hashtagCounts = {};\n  allHashtags.forEach(tag => {\n    hashtagCounts[tag] = (hashtagCounts[tag] || 0) + 1;\n  });\n  \n  // Get top trending hashtags\n  trendingHashtags = Object.entries(hashtagCounts)\n    .sort(([,a], [,b]) => b - a)\n    .slice(0, 5)\n    .map(([tag]) => tag);\n    \n  avgEngagement = Math.round((totalLikes + totalRetweets) / trendData.data.length);\n  \n  trendInsights = `Current trends show ${avgEngagement} avg engagement. Top hashtags: ${trendingHashtags.slice(0, 3).join(', ')}`;\n}\n\n// Merge trending hashtags with content hashtags\nconst existingHashtags = twitterContent.hashtags.split(' ').filter(tag => tag.trim());\nconst combinedHashtags = [...new Set([...existingHashtags, ...trendingHashtags.slice(0, 2)])].join(' ');\n\n// Enhanced content with trends\nconst enhancedContent = {\n  ...twitterContent,\n  hashtags: combinedHashtags,\n  trendInsights: trendInsights,\n  avgEngagement: avgEngagement,\n  trendingHashtags: trendingHashtags,\n  optimizedForTrends: true\n};\n\nreturn [{\n  json: enhancedContent\n}];"
+      },
+      "id": "trend-enhancer-001",
+      "name": "Trend-Enhanced Content",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "{{ $credentials.googleSheets.spreadsheetId }}",
+        "sheetName": "Twitter Content Queue",
+        "columnNamesFirstRow": true,
+        "valueInputMode": "raw",
+        "columns": [
+          {
+            "column": "ID",
+            "value": "={{ $json.id }}"
+          },
+          {
+            "column": "Type",
+            "value": "={{ $json.type }}"
+          },
+          {
+            "column": "Industry",
+            "value": "={{ $json.industry }}"
+          },
+          {
+            "column": "Tweet Count",
+            "value": "={{ $json.tweets.length }}"
+          },
+          {
+            "column": "First Tweet",
+            "value": "={{ $json.tweets[0] ? $json.tweets[0].content : 'No content' }}"
+          },
+          {
+            "column": "Hashtags",
+            "value": "={{ $json.hashtags }}"
+          },
+          {
+            "column": "Suggested Time",
+            "value": "={{ $json.suggestedTime }}"
+          },
+          {
+            "column": "Trend Insights",
+            "value": "={{ $json.trendInsights }}"
+          },
+          {
+            "column": "Status",
+            "value": "={{ $json.status }}"
+          },
+          {
+            "column": "Ready to Post",
+            "value": "={{ $json.readyToPost ? 'Yes' : 'No' }}"
+          },
+          {
+            "column": "Created",
+            "value": "={{ $json.createdAt }}"
+          }
+        ]
+      },
+      "id": "save-twitter-queue-001",
+      "name": "Save to Twitter Queue",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 1,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.readyToPost }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-twitter-ready-001",
+      "name": "Check if Ready to Post",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "channel": "#twitter-content",
+        "text": "🐦 **New Twitter Content Ready**\\n\\n**Type:** {{ $json.type }} ({{ $json.tweets.length }} tweets)\\n**Industry:** {{ $json.industry }}\\n**Content Type:** {{ $json.contentType }}\\n\\n**First Tweet Preview:**\\n{{ $json.tweets[0] ? $json.tweets[0].content.substring(0, 100) + '...' : 'No content' }}\\n\\n**Hashtags:** {{ $json.hashtags.substring(0, 100) }}\\n\\n**Trend Insights:** {{ $json.trendInsights }}\\n**Suggested Time:** {{ $json.suggestedTime }}\\n\\n✅ Review and approve in the Twitter content queue",
+        "otherOptions": {
+          "includeLinkToWorkflow": true
+        }
+      },
+      "id": "slack-twitter-notification-001",
+      "name": "Notify Team for Twitter Review",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 1,
+      "position": [2000, 200]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Prepare Twitter posting instructions\nconst content = $input.first().json;\n\n// Create posting instructions for each tweet\nconst postingPlan = {\n  platform: 'twitter',\n  action: 'ready_to_schedule',\n  threadId: content.id,\n  type: content.type,\n  totalTweets: content.tweets.length,\n  tweets: content.tweets.map((tweet, index) => ({\n    order: index + 1,\n    content: tweet.content,\n    length: tweet.length,\n    isValid: tweet.valid,\n    instructions: index === 0 \n      ? 'Post as main tweet' \n      : `Reply to tweet ${index} immediately after posting`\n  })),\n  hashtags: content.hashtags,\n  scheduledTime: content.suggestedTime,\n  postingInstructions: [\n    '1. Copy first tweet content',\n    '2. Post on Twitter',\n    '3. If thread: immediately reply with subsequent tweets',\n    '4. Add hashtags to final tweet',\n    '5. Monitor for engagement',\n    '6. Respond to quality replies within 2 hours'\n  ],\n  engagementStrategy: {\n    firstHour: 'Monitor and respond to all replies',\n    ongoing: 'Like thoughtful responses, retweet quality reactions',\n    metrics: 'Track likes, retweets, replies, and click-through rates'\n  },\n  trendOptimization: content.trendInsights\n};\n\nreturn [{\n  json: postingPlan\n}];"
+      },
+      "id": "twitter-posting-prep-001",
+      "name": "Prepare Twitter Posting",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2000, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{{ $json }}"
+      },
+      "id": "twitter-workflow-complete-001",
+      "name": "Twitter Workflow Complete",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2220, 300]
+    }
+  ],
+  "connections": {
+    "Twitter Schedule": {
+      "main": [
+        [
+          {
+            "node": "Twitter Strategy Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Twitter Strategy Generator": {
+      "main": [
+        [
+          {
+            "node": "Claude Twitter Creator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Twitter Creator": {
+      "main": [
+        [
+          {
+            "node": "Twitter Content Parser",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Twitter Content Parser": {
+      "main": [
+        [
+          {
+            "node": "Analyze Current Trends",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Current Trends": {
+      "main": [
+        [
+          {
+            "node": "Trend-Enhanced Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trend-Enhanced Content": {
+      "main": [
+        [
+          {
+            "node": "Save to Twitter Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Twitter Queue": {
+      "main": [
+        [
+          {
+            "node": "Check if Ready to Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if Ready to Post": {
+      "main": [
+        [
+          {
+            "node": "Notify Team for Twitter Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Twitter Posting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Team for Twitter Review": {
+      "main": [
+        [
+          {
+            "node": "Twitter Workflow Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Twitter Posting": {
+      "main": [
+        [
+          {
+            "node": "Twitter Workflow Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "staticData": null,
+  "tags": ["content", "twitter", "social-media", "automation", "threads"],
+  "triggerCount": 1,
+  "updatedAt": "2024-08-19T00:00:00.000Z",
+  "versionId": "1"
+}

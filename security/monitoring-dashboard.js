@@ -12,7 +12,7 @@ const crypto = require('crypto');
 
 class SecurityMonitor {
     constructor() {
-        this.logFile = '/var/log/n8n-security.log';
+        this.logFile = '~/.n8n/logs/security.log';
         this.alertThresholds = {
             failedWebhooks: 5,
             invalidSignatures: 3,
