@@ -1,0 +1,264 @@
+{
+  "name": "Secure Claude Code Assistant Integration",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "/code-analysis",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "github.com,api.github.com",
+          "rawBody": true
+        }
+      },
+      "id": "secure-webhook-001",
+      "name": "Secure GitHub Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Security validation and signature verification\nconst crypto = require('crypto');\nconst items = $input.all();\n\nif (!items.length) {\n  throw new Error('No webhook data received');\n}\n\nconst payload = items[0];\nconst headers = payload.headers || {};\n\n// Verify required headers\nconst requiredHeaders = ['x-hub-signature-256', 'x-github-delivery', 'user-agent'];\nfor (const header of requiredHeaders) {\n  if (!headers[header]) {\n    throw new Error(`Missing required header: ${header}`);\n  }\n}\n\n// Verify User-Agent\nif (!headers['user-agent'].includes('GitHub-Actions-Secure-Webhook')) {\n  throw new Error('Invalid User-Agent');\n}\n\n// Get webhook secret from environment\nconst webhookSecret = process.env.WEBHOOK_SECRET;\nif (!webhookSecret) {\n  throw new Error('Webhook secret not configured');\n}\n\n// Verify signature\nconst bodyString = JSON.stringify(payload.body);\nconst expectedSignature = crypto\n  .createHmac('sha256', webhookSecret)\n  .update(bodyString)\n  .digest('base64');\n\nconst receivedSignature = headers['x-hub-signature-256'].replace('sha256=', '');\n\nif (!crypto.timingSafeEqual(Buffer.from(expectedSignature), Buffer.from(receivedSignature))) {\n  throw new Error('Invalid webhook signature');\n}\n\n// Rate limiting check (simple in-memory)\nconst now = Date.now();\nconst rateLimitWindow = 60000; // 1 minute\nconst maxRequests = 10;\nconst clientKey = headers['x-github-delivery'] || 'unknown';\n\n// This would ideally use Redis or similar for production\nif (!global.rateLimitData) {\n  global.rateLimitData = {};\n}\n\nif (!global.rateLimitData[clientKey]) {\n  global.rateLimitData[clientKey] = [];\n}\n\n// Clean old requests\nglobal.rateLimitData[clientKey] = global.rateLimitData[clientKey].filter(\n  timestamp => now - timestamp < rateLimitWindow\n);\n\n// Check rate limit\nif (global.rateLimitData[clientKey].length >= maxRequests) {\n  throw new Error('Rate limit exceeded');\n}\n\n// Add current request\nglobal.rateLimitData[clientKey].push(now);\n\nreturn [{\n  json: {\n    validation: 'passed',\n    timestamp: new Date().toISOString(),\n    github_delivery: headers['x-github-delivery'],\n    verified: true\n  }\n}];"
+      },
+      "id": "security-validator-001",
+      "name": "Security Validator",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Input sanitization and validation\nconst inputData = $input.first().json;\nconst originalPayload = $('Secure GitHub Webhook').first().json.body;\n\n// Sanitization functions\nfunction sanitizeString(str, maxLength = 1000) {\n  if (typeof str !== 'string') return '';\n  return str\n    .replace(/[<>\"'&]/g, '') // Remove potentially dangerous characters\n    .substring(0, maxLength)\n    .trim();\n}\n\nfunction sanitizeNumber(num) {\n  const parsed = parseInt(num, 10);\n  return isNaN(parsed) ? 0 : Math.abs(parsed);\n}\n\nfunction sanitizeUrl(url) {\n  try {\n    const parsed = new URL(url);\n    if (!['https:', 'http:'].includes(parsed.protocol)) {\n      throw new Error('Invalid protocol');\n    }\n    if (!parsed.hostname.includes('github.com')) {\n      throw new Error('Invalid hostname');\n    }\n    return parsed.toString();\n  } catch {\n    return null;\n  }\n}\n\n// Validate required fields\nif (!originalPayload.event || !originalPayload.repository) {\n  throw new Error('Missing required fields');\n}\n\n// Sanitize and validate all inputs\nconst sanitizedData = {\n  event: sanitizeString(originalPayload.event, 50),\n  repository: sanitizeString(originalPayload.repository, 100),\n  pr_number: sanitizeNumber(originalPayload.pr_number),\n  pr_url: sanitizeUrl(originalPayload.pr_url),\n  diff_url: sanitizeUrl(originalPayload.diff_url),\n  author: sanitizeString(originalPayload.author, 50),\n  timestamp: originalPayload.timestamp,\n  github_delivery: sanitizeString(originalPayload.github_delivery, 100)\n};\n\n// Validate sanitized data\nif (!sanitizedData.pr_url || !sanitizedData.diff_url) {\n  throw new Error('Invalid URLs provided');\n}\n\nif (sanitizedData.pr_number <= 0) {\n  throw new Error('Invalid PR number');\n}\n\n// Security logging\nconsole.log(`[SECURITY] Webhook processed: PR #${sanitizedData.pr_number} from ${sanitizedData.author}`);\n\nreturn [{\n  json: sanitizedData\n}];"
+      },
+      "id": "input-sanitizer-001",
+      "name": "Input Sanitizer",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.diff_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "httpHeaderAuth": {
+          "name": "Authorization",
+          "value": "token {{ $credentials.githubApiSecure.accessToken }}"
+        },
+        "options": {
+          "headers": {
+            "Accept": "application/vnd.github.v3.diff",
+            "User-Agent": "n8n-secure-integration/1.0"
+          },
+          "timeout": 30000,
+          "followRedirect": false
+        }
+      },
+      "id": "secure-diff-fetch-001",
+      "name": "Secure Diff Fetch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Secure Claude prompt preparation with content filtering\nconst prData = $input.first().json;\nconst diffResponse = $('Secure Diff Fetch').first();\n\n// Security check for diff response\nif (!diffResponse || diffResponse.statusCode !== 200) {\n  throw new Error('Failed to fetch diff or invalid response');\n}\n\nlet diffContent = '';\nif (diffResponse.body) {\n  diffContent = typeof diffResponse.body === 'string' \n    ? diffResponse.body \n    : String(diffResponse.body);\n}\n\n// Content filtering and size limits\nconst MAX_DIFF_SIZE = 50000; // 50KB limit\nconst MAX_LINES = 1000;\n\nif (diffContent.length > MAX_DIFF_SIZE) {\n  diffContent = diffContent.substring(0, MAX_DIFF_SIZE) + '\\n[TRUNCATED - Content too large]';\n}\n\n// Filter potentially sensitive content\nconst sensitivePatterns = [\n  /(?:password|passwd|pwd)\\s*[=:]\\s*['\"]?([^'\"\\s]+)['\"]?/gi,\n  /(?:api[_-]?key|apikey)\\s*[=:]\\s*['\"]?([^'\"\\s]+)['\"]?/gi,\n  /(?:secret|token)\\s*[=:]\\s*['\"]?([^'\"\\s]+)['\"]?/gi,\n  /(?:private[_-]?key)\\s*[=:]\\s*['\"]?([^'\"\\s]+)['\"]?/gi\n];\n\nfor (const pattern of sensitivePatterns) {\n  diffContent = diffContent.replace(pattern, (match, capture) => {\n    const replacement = '*'.repeat(Math.min(capture.length, 8));\n    return match.replace(capture, `[REDACTED-${replacement}]`);\n  });\n}\n\n// Limit number of lines\nconst lines = diffContent.split('\\n');\nif (lines.length > MAX_LINES) {\n  diffContent = lines.slice(0, MAX_LINES).join('\\n') + '\\n[TRUNCATED - Too many lines]';\n}\n\n// Prepare secure prompt\nconst securePrompt = `You are a secure code review assistant. Analyze this pull request with focus on:\n\n**Repository:** ${prData.repository}\n**PR Number:** ${prData.pr_number}\n**Author:** ${prData.author}\n**Analysis Timestamp:** ${new Date().toISOString()}\n\n**Code Changes:**\n\\`\\`\\`diff\n${diffContent}\n\\`\\`\\`\n\n**Review Guidelines:**\n1. Focus on code quality, security, and best practices\n2. Do not include sensitive information in your response\n3. Provide constructive feedback only\n4. Keep responses professional and helpful\n5. Flag any potential security vulnerabilities\n\n**Required Analysis:**\n- Code quality assessment\n- Security considerations\n- Performance implications\n- Best practice adherence\n- Improvement suggestions\n\n**Response Format:**\nProvide a structured review with clear sections and actionable feedback.`;\n\n// Validate prompt size\nif (securePrompt.length > 100000) {\n  throw new Error('Prompt too large for processing');\n}\n\nreturn [{\n  json: {\n    ...prData,\n    claude_prompt: securePrompt,\n    diff_size: diffContent.length,\n    diff_lines: diffContent.split('\\n').length,\n    security_filtered: true\n  }\n}];"
+      },
+      "id": "secure-prompt-prep-001",
+      "name": "Secure Prompt Preparation",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "resource": "text",
+        "operation": "message",
+        "model": "claude-3-5-sonnet-20241022",
+        "prompt": "={{ $json.claude_prompt }}",
+        "options": {
+          "maxTokens": 2000,
+          "temperature": 0.1,
+          "stopSequences": ["```", "END_REVIEW"]
+        }
+      },
+      "id": "secure-claude-analysis-001",
+      "name": "Secure Claude Analysis",
+      "type": "n8n-nodes-base.anthropic",
+      "typeVersion": 1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Output sanitization and security filtering\nconst analysisResult = $input.first().json;\nconst prData = $('Secure Prompt Preparation').first().json;\n\nif (!analysisResult.content) {\n  throw new Error('No analysis content received');\n}\n\nlet reviewContent = analysisResult.content;\n\n// Security filtering for output\nconst outputFilters = [\n  // Remove any potential code injection\n  /<script[^>]*>[\\s\\S]*?<\\/script>/gi,\n  /<iframe[^>]*>[\\s\\S]*?<\\/iframe>/gi,\n  /javascript:/gi,\n  /data:text\\/html/gi,\n  // Remove potential markdown injection\n  /!\\[.*?\\]\\((?!https:\\/\\/github\\.com)[^\\)]*\\)/gi\n];\n\nfor (const filter of outputFilters) {\n  reviewContent = reviewContent.replace(filter, '[FILTERED_CONTENT]');\n}\n\n// Ensure content length limits\nconst MAX_COMMENT_LENGTH = 65000; // GitHub comment limit\nif (reviewContent.length > MAX_COMMENT_LENGTH) {\n  reviewContent = reviewContent.substring(0, MAX_COMMENT_LENGTH - 100) + \n    '\\n\\n[Review truncated due to length limits]';\n}\n\n// Add security footer\nconst securityFooter = `\\n\\n---\\n🛡️ **Security Notice:** This review was generated by a secure AI system with content filtering and validation.\\n🔍 **Analysis ID:** ${prData.github_delivery}\\n⏰ **Generated:** ${new Date().toISOString()}`;\n\nconst finalContent = `🤖 **Secure Claude Code Assistant Review**\\n\\n${reviewContent}${securityFooter}`;\n\n// Log security event\nconsole.log(`[SECURITY] Review generated for PR #${prData.pr_number}, Content length: ${finalContent.length}`);\n\nreturn [{\n  json: {\n    ...prData,\n    filtered_content: finalContent,\n    content_length: finalContent.length,\n    security_validated: true\n  }\n}];"
+      },
+      "id": "output-sanitizer-001",
+      "name": "Output Sanitizer",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "issue",
+        "operation": "createComment",
+        "owner": "={{ $json.repository.split('/')[0] }}",
+        "repository": "={{ $json.repository.split('/')[1] }}",
+        "issueNumber": "={{ $json.pr_number }}",
+        "body": "={{ $json.filtered_content }}",
+        "additionalFields": {
+          "requestOptions": {
+            "timeout": 30000
+          }
+        }
+      },
+      "id": "secure-comment-post-001",
+      "name": "Secure Comment Post",
+      "type": "n8n-nodes-base.github",
+      "typeVersion": 1,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Security logging and monitoring\nconst result = $input.first().json;\nconst prData = $('Output Sanitizer').first().json;\n\n// Log successful completion\nconst logEntry = {\n  timestamp: new Date().toISOString(),\n  event: 'secure_review_completed',\n  pr_number: prData.pr_number,\n  repository: prData.repository,\n  author: prData.author,\n  github_delivery: prData.github_delivery,\n  content_length: prData.content_length,\n  diff_size: prData.diff_size,\n  security_validated: true,\n  status: 'success'\n};\n\nconsole.log(`[AUDIT] ${JSON.stringify(logEntry)}`);\n\nreturn [{\n  json: {\n    status: 'success',\n    message: 'Secure code analysis completed successfully',\n    pr_number: prData.pr_number,\n    analysis_id: prData.github_delivery,\n    timestamp: new Date().toISOString(),\n    security_level: 'high'\n  }\n}];"
+      },
+      "id": "security-logger-001",
+      "name": "Security Logger",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{{ $json }}",
+        "options": {
+          "responseHeaders": {
+            "X-Security-Level": "high",
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY"
+          }
+        }
+      },
+      "id": "secure-response-001",
+      "name": "Secure Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2220, 300]
+    }
+  ],
+  "connections": {
+    "Secure GitHub Webhook": {
+      "main": [
+        [
+          {
+            "node": "Security Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Security Validator": {
+      "main": [
+        [
+          {
+            "node": "Input Sanitizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Sanitizer": {
+      "main": [
+        [
+          {
+            "node": "Secure Diff Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Secure Diff Fetch": {
+      "main": [
+        [
+          {
+            "node": "Secure Prompt Preparation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Secure Prompt Preparation": {
+      "main": [
+        [
+          {
+            "node": "Secure Claude Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Secure Claude Analysis": {
+      "main": [
+        [
+          {
+            "node": "Output Sanitizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Output Sanitizer": {
+      "main": [
+        [
+          {
+            "node": "Secure Comment Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Secure Comment Post": {
+      "main": [
+        [
+          {
+            "node": "Security Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Security Logger": {
+      "main": [
+        [
+          {
+            "node": "Secure Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": ["security", "claude", "github", "secure"],
+  "triggerCount": 1,
+  "updatedAt": "2024-08-19T00:00:00.000Z",
+  "versionId": "2"
+}

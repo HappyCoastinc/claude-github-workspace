@@ -1,4 +1,4 @@
-name: Claude + n8n Integration Workflow
+name: Claude + n8n Secure Integration Workflow
 
 on:
   push:
@@ -8,50 +8,153 @@ on:
   issues:
     types: [opened, edited, labeled]
 
+env:
+  WEBHOOK_TIMEOUT: 30
+  MAX_RETRIES: 3
+
 jobs:
   trigger-n8n-workflows:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      
+      - name: Validate Environment
+        run: |
+          if [ -z "${{ secrets.N8N_WEBHOOK_URL }}" ]; then
+            echo "❌ N8N_WEBHOOK_URL secret not configured"
+            exit 1
+          fi
+          if [ -z "${{ secrets.WEBHOOK_SECRET }}" ]; then
+            echo "❌ WEBHOOK_SECRET not configured"
+            exit 1
+          fi
+          echo "✅ Required secrets configured"
         
       - name: Trigger n8n Code Analysis Workflow
         if: github.event_name == 'pull_request'
         run: |
-          curl -X POST "${{ secrets.N8N_WEBHOOK_URL }}/code-analysis" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "event": "pull_request",
-              "repository": "${{ github.repository }}",
-              "pr_number": "${{ github.event.number }}",
-              "pr_url": "${{ github.event.pull_request.html_url }}",
-              "diff_url": "${{ github.event.pull_request.diff_url }}",
-              "author": "${{ github.event.pull_request.user.login }}"
-            }'
+          # Prepare sanitized payload
+          PAYLOAD=$(cat <<EOF
+          {
+            "event": "pull_request",
+            "repository": "${{ github.repository }}",
+            "pr_number": ${{ github.event.number }},
+            "pr_url": "${{ github.event.pull_request.html_url }}",
+            "diff_url": "${{ github.event.pull_request.diff_url }}",
+            "author": "${{ github.event.pull_request.user.login }}",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "github_delivery": "${{ github.run_id }}"
+          }
+          EOF
+          )
+          
+          # Generate HMAC signature
+          SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "${{ secrets.WEBHOOK_SECRET }}" -binary | base64)
+          
+          # Send secure webhook with retries
+          for i in $(seq 1 $MAX_RETRIES); do
+            if curl -X POST "${{ secrets.N8N_WEBHOOK_URL }}/code-analysis" \
+              --max-time $WEBHOOK_TIMEOUT \
+              --fail \
+              -H "Content-Type: application/json" \
+              -H "X-Hub-Signature-256: sha256=$SIGNATURE" \
+              -H "X-GitHub-Delivery: ${{ github.run_id }}" \
+              -H "User-Agent: GitHub-Actions-Secure-Webhook/1.0" \
+              -d "$PAYLOAD"; then
+              echo "✅ Webhook delivered successfully"
+              break
+            else
+              echo "⚠️ Webhook delivery attempt $i failed"
+              if [ $i -eq $MAX_RETRIES ]; then
+                echo "❌ All webhook delivery attempts failed"
+                exit 1
+              fi
+              sleep $((i * 2))
+            fi
+          done
             
       - name: Trigger n8n Documentation Update
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          curl -X POST "${{ secrets.N8N_WEBHOOK_URL }}/docs-update" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "event": "push",
-              "repository": "${{ github.repository }}",
-              "commit_sha": "${{ github.sha }}",
-              "commit_message": "${{ github.event.head_commit.message }}",
-              "modified_files": ${{ toJson(github.event.head_commit.modified) }}
-            }'
+          # Prepare sanitized payload
+          PAYLOAD=$(cat <<EOF
+          {
+            "event": "push",
+            "repository": "${{ github.repository }}",
+            "commit_sha": "${{ github.sha }}",
+            "commit_message": $(echo '${{ github.event.head_commit.message }}' | jq -Rs .),
+            "modified_files": ${{ toJson(github.event.head_commit.modified) }},
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "github_delivery": "${{ github.run_id }}"
+          }
+          EOF
+          )
+          
+          # Generate HMAC signature
+          SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "${{ secrets.WEBHOOK_SECRET }}" -binary | base64)
+          
+          # Send secure webhook with retries
+          for i in $(seq 1 $MAX_RETRIES); do
+            if curl -X POST "${{ secrets.N8N_WEBHOOK_URL }}/docs-update" \
+              --max-time $WEBHOOK_TIMEOUT \
+              --fail \
+              -H "Content-Type: application/json" \
+              -H "X-Hub-Signature-256: sha256=$SIGNATURE" \
+              -H "X-GitHub-Delivery: ${{ github.run_id }}" \
+              -H "User-Agent: GitHub-Actions-Secure-Webhook/1.0" \
+              -d "$PAYLOAD"; then
+              echo "✅ Docs webhook delivered successfully"
+              break
+            else
+              echo "⚠️ Docs webhook delivery attempt $i failed"
+              if [ $i -eq $MAX_RETRIES ]; then
+                echo "❌ All docs webhook delivery attempts failed"
+                exit 1
+              fi
+              sleep $((i * 2))
+            fi
+          done
             
       - name: Trigger n8n Issue Triage
         if: github.event_name == 'issues' && github.event.action == 'opened'
         run: |
-          curl -X POST "${{ secrets.N8N_WEBHOOK_URL }}/issue-triage" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "event": "issue_opened",
-              "repository": "${{ github.repository }}",
-              "issue_number": "${{ github.event.issue.number }}",
-              "issue_title": "${{ github.event.issue.title }}",
-              "issue_body": "${{ github.event.issue.body }}",
-              "author": "${{ github.event.issue.user.login }}"
-            }'
+          # Prepare sanitized payload
+          PAYLOAD=$(cat <<EOF
+          {
+            "event": "issue_opened",
+            "repository": "${{ github.repository }}",
+            "issue_number": ${{ github.event.issue.number }},
+            "issue_title": $(echo '${{ github.event.issue.title }}' | jq -Rs .),
+            "issue_body": $(echo '${{ github.event.issue.body }}' | jq -Rs . | head -c 5000),
+            "author": "${{ github.event.issue.user.login }}",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "github_delivery": "${{ github.run_id }}"
+          }
+          EOF
+          )
+          
+          # Generate HMAC signature
+          SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "${{ secrets.WEBHOOK_SECRET }}" -binary | base64)
+          
+          # Send secure webhook with retries
+          for i in $(seq 1 $MAX_RETRIES); do
+            if curl -X POST "${{ secrets.N8N_WEBHOOK_URL }}/issue-triage" \
+              --max-time $WEBHOOK_TIMEOUT \
+              --fail \
+              -H "Content-Type: application/json" \
+              -H "X-Hub-Signature-256: sha256=$SIGNATURE" \
+              -H "X-GitHub-Delivery: ${{ github.run_id }}" \
+              -H "User-Agent: GitHub-Actions-Secure-Webhook/1.0" \
+              -d "$PAYLOAD"; then
+              echo "✅ Issue webhook delivered successfully"
+              break
+            else
+              echo "⚠️ Issue webhook delivery attempt $i failed"
+              if [ $i -eq $MAX_RETRIES ]; then
+                echo "❌ All issue webhook delivery attempts failed"
+                exit 1
+              fi
+              sleep $((i * 2))
+            fi
+          done
